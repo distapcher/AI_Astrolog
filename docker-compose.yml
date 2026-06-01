@@ -8,3 +8,4 @@ services:
     volumes:
       - ./bot:/app/bot
       - ./prompts:/app/prompts
+      - ./data:/data

@@ -23,6 +23,7 @@ class Settings:
     geonames_username: str | None
     personality_prompt_path: Path
     ai_max_tokens: int
+    natal_db_path: Path
 
 
 def load_settings() -> Settings:
@@ -49,4 +50,5 @@ def load_settings() -> Settings:
         geonames_username=os.getenv("GEONAMES_USERNAME", "").strip() or None,
         personality_prompt_path=prompt_path,
         ai_max_tokens=int(os.getenv("AI_MAX_TOKENS", "12000")),
+        natal_db_path=Path(os.getenv("NATAL_DB_PATH", "/data/natal_profiles.db")),
     )

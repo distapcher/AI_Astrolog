@@ -25,12 +25,13 @@ from bot.services.natal_bundle import (
     bundle_plain_text_for_ai,
     bundle_report_messages,
 )
+from bot.services.natal_store import load_natal_profile, save_natal_profile
 from bot.states import NatalChartStates
 
 logger = logging.getLogger(__name__)
 router = Router()
 
-_last_natal_bundle: dict[int, NatalChartBundle] = {}
+_bundle_cache: dict[int, NatalChartBundle] = {}
 
 
 async def _start_chart_flow(message: Message, state: FSMContext) -> None:
@@ -188,7 +189,8 @@ async def on_birth_nation(
         return
 
     if user_id:
-        _last_natal_bundle[user_id] = bundle
+        _bundle_cache[user_id] = bundle
+        save_natal_profile(user_id, natal, settings.natal_db_path)
 
     chart_text = bundle_plain_text_for_ai(bundle)
 
@@ -220,23 +222,39 @@ async def on_birth_nation(
 async def on_show_natal_data(
     callback: CallbackQuery,
     astrologer: AstrologerClient,
+    settings: Settings,
 ) -> None:
     user_id = callback.from_user.id if callback.from_user else 0
-    bundle = _last_natal_bundle.get(user_id)
-    if not bundle:
+    if not user_id:
+        await callback.answer("Не удалось определить пользователя.", show_alert=True)
+        return
+
+    natal = load_natal_profile(user_id, settings.natal_db_path)
+    if not natal:
         await callback.answer(
-            "Данные устарели. Сначала пройдите анализ заново (/chart).",
+            "Сначала пройдите «🔮 Анализ личности».",
             show_alert=True,
         )
         return
 
     await callback.answer()
-    status = await callback.message.answer("⏳ Открываю натальные данные…")
+    status = await callback.message.answer("⏳ Рассчитываю и открываю натальные данные…")
+
+    try:
+        bundle = await build_natal_bundle(natal, astrologer)
+        _bundle_cache[user_id] = bundle
+    except RuntimeError as exc:
+        await status.edit_text(str(exc))
+        return
+    except Exception as exc:
+        logger.exception("Show natal data failed")
+        await status.edit_text(f"Не удалось показать данные: {exc}")
+        return
 
     try:
         await _send_natal_data(callback.message, bundle, astrologer)
     except Exception as exc:
-        logger.exception("Show natal data failed")
+        logger.exception("Send natal data failed")
         await status.edit_text(f"Не удалось показать данные: {exc}")
         return
 
