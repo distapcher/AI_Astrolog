@@ -24,3 +24,6 @@ class ServicesMiddleware(BaseMiddleware):
         data["astrologer"] = self._astrologer
         data["ai"] = self._ai
         return await handler(event, data)
+
+
+__all__ = ["ServicesMiddleware"]
