@@ -1,6 +1,7 @@
 services:
   ai-astrolog:
     build: .
+    image: ai_astrolog:latest
     restart: unless-stopped
     network_mode: host
     env_file:
@@ -11,7 +12,7 @@ services:
       - ./data:/data
 
   dashboard:
-    build: .
+    image: ai_astrolog:latest
     restart: unless-stopped
     network_mode: host
     env_file:
