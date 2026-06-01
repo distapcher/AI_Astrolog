@@ -24,6 +24,11 @@ class Settings:
     personality_prompt_path: Path
     ai_max_tokens: int
     natal_db_path: Path
+    analytics_db_path: Path
+    dashboard_host: str
+    dashboard_port: int
+    dashboard_user: str
+    dashboard_password: str
 
 
 def load_settings() -> Settings:
@@ -51,4 +56,9 @@ def load_settings() -> Settings:
         personality_prompt_path=prompt_path,
         ai_max_tokens=int(os.getenv("AI_MAX_TOKENS", "12000")),
         natal_db_path=Path(os.getenv("NATAL_DB_PATH", "/data/natal_profiles.db")),
+        analytics_db_path=Path(os.getenv("ANALYTICS_DB_PATH", "/data/analytics.db")),
+        dashboard_host=os.getenv("DASHBOARD_HOST", "0.0.0.0").strip(),
+        dashboard_port=int(os.getenv("DASHBOARD_PORT", "8787")),
+        dashboard_user=os.getenv("DASHBOARD_USER", "admin").strip(),
+        dashboard_password=os.getenv("DASHBOARD_PASSWORD", "changeme").strip(),
     )

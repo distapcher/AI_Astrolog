@@ -9,6 +9,8 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from bot.config import load_settings
 from bot.handlers import router
 from bot.middlewares import ServicesMiddleware
+from bot.middlewares.user_tracking import UserTrackingMiddleware
+from bot.services.usage_store import init_analytics_db
 from bot.services.ai_interpreter import AiInterpreter
 from bot.services.astrologer_api import AstrologerClient
 
@@ -21,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 async def main() -> None:
     settings = load_settings()
+    init_analytics_db(settings.analytics_db_path)
     bot = Bot(
         token=settings.bot_token,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
@@ -30,7 +33,10 @@ async def main() -> None:
     astrologer = AstrologerClient(settings)
     ai = AiInterpreter(settings)
 
+    tracking = UserTrackingMiddleware(settings)
     services = ServicesMiddleware(settings, astrologer, ai)
+    dp.message.middleware(tracking)
+    dp.callback_query.middleware(tracking)
     dp.message.middleware(services)
     dp.callback_query.middleware(services)
     dp.include_router(router)

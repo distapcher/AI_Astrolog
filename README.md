@@ -14,6 +14,20 @@
 | `/chart` | Построить натальную карту |
 | `/help` | Справка |
 
+## Дашборд
+
+Веб-панель со списком Telegram-пользователей, числом запусков анализа личности и расходом токенов ИИ.
+
+```bash
+# в Docker (отдельный сервис dashboard)
+docker compose up -d dashboard
+
+# локально
+ai-astrolog-dashboard
+```
+
+Откройте `http://<сервер>:8787` (порт задаётся `DASHBOARD_PORT`). Логин и пароль — `DASHBOARD_USER` / `DASHBOARD_PASSWORD`.
+
 ## Переменные окружения
 
 Скопируйте `.env.example` в `.env`:
@@ -29,6 +43,11 @@ CHART_LANGUAGE=RU
 OPENAI_API_KEY=...
 OPENAI_BASE_URL=https://api.deepseek.com/v1
 OPENAI_MODEL=deepseek-chat
+
+# Дашборд
+DASHBOARD_PORT=8787
+DASHBOARD_USER=admin
+DASHBOARD_PASSWORD=...
 ```
 
 ## Локальный запуск

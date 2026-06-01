@@ -1,12 +1,26 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 
 import httpx
 
 from bot.config import Settings
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class LlmUsage:
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
+
+
+@dataclass(frozen=True)
+class PersonalityAnalysisResult:
+    text: str
+    usage: LlmUsage
 
 
 class AiInterpreter:
@@ -25,7 +39,21 @@ class AiInterpreter:
         logger.warning("Personality prompt not found: %s", path)
         return ""
 
-    async def interpret_personality(self, name: str, chart_text: str) -> str:
+    @staticmethod
+    def _parse_usage(data: dict) -> LlmUsage:
+        usage = data.get("usage") or {}
+        prompt = int(usage.get("prompt_tokens") or 0)
+        completion = int(usage.get("completion_tokens") or 0)
+        total = int(usage.get("total_tokens") or 0)
+        if total <= 0:
+            total = prompt + completion
+        return LlmUsage(
+            prompt_tokens=prompt,
+            completion_tokens=completion,
+            total_tokens=total,
+        )
+
+    async def interpret_personality(self, name: str, chart_text: str) -> PersonalityAnalysisResult:
         """Расшифровка предназначения и профессии по промпту astrolog_prof_ru."""
         if not self._enabled:
             raise RuntimeError("ИИ не настроен (нет OPENAI_API_KEY)")
@@ -66,4 +94,5 @@ class AiInterpreter:
         choices = data.get("choices") or []
         if not choices:
             raise RuntimeError("Пустой ответ от ИИ.")
-        return choices[0]["message"]["content"].strip()
+        text = choices[0]["message"]["content"].strip()
+        return PersonalityAnalysisResult(text=text, usage=self._parse_usage(data))

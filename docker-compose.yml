@@ -9,3 +9,14 @@ services:
       - ./bot:/app/bot
       - ./prompts:/app/prompts
       - ./data:/data
+
+  dashboard:
+    build: .
+    restart: unless-stopped
+    network_mode: host
+    env_file:
+      - .env
+    command: ["python", "-m", "bot.dashboard"]
+    volumes:
+      - ./bot:/app/bot
+      - ./data:/data

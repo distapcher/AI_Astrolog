@@ -26,6 +26,11 @@ from bot.services.natal_bundle import (
     bundle_report_messages,
 )
 from bot.services.natal_store import load_natal_profile, save_natal_profile
+from bot.services.usage_store import (
+    add_token_usage,
+    record_personality_analysis_start,
+    upsert_telegram_user,
+)
 from bot.states import NatalChartStates
 
 logger = logging.getLogger(__name__)
@@ -144,6 +149,15 @@ async def on_birth_nation(
     await state.clear()
 
     user_id = message.from_user.id if message.from_user else 0
+    if user_id and message.from_user:
+        upsert_telegram_user(
+            user_id,
+            username=message.from_user.username,
+            first_name=message.from_user.first_name,
+            last_name=message.from_user.last_name,
+            db_path=settings.analytics_db_path,
+        )
+
     wait_msg = await message.answer(
         "⏳ Рассчитываю карту и готовлю <b>описание личности и предназначения</b>…\n"
         "<i>Это займёт 3–7 минут.</i>"
@@ -198,11 +212,22 @@ async def on_birth_nation(
         await wait_msg.edit_text(
             "⏳ Расчет карты произведен. Запущен процесс анализа личности…"
         )
-        personality_text = await ai.interpret_personality(natal.name, chart_text)
+        if user_id:
+            record_personality_analysis_start(user_id, settings.analytics_db_path)
+        result = await ai.interpret_personality(natal.name, chart_text)
     except Exception as exc:
         logger.exception("AI personality analysis failed")
         await wait_msg.edit_text(f"Не удалось получить описание: {exc}")
         return
+
+    if user_id:
+        add_token_usage(
+            user_id,
+            prompt_tokens=result.usage.prompt_tokens,
+            completion_tokens=result.usage.completion_tokens,
+            total_tokens=result.usage.total_tokens,
+            db_path=settings.analytics_db_path,
+        )
 
     await wait_msg.delete()
     await message.answer(
@@ -210,7 +235,7 @@ async def on_birth_nation(
         f"📅 {natal.day:02d}.{natal.month:02d}.{natal.year}, "
         f"{natal.hour:02d}:{natal.minute:02d} · {natal.location.display_name}"
     )
-    await send_long_text(message, personality_text, title="Анализ")
+    await send_long_text(message, result.text, title="Анализ")
     await message.answer(
         "Натальная карта и технические данные (планеты, аспекты, паттерны) "
         "можно открыть по кнопке ниже.",
