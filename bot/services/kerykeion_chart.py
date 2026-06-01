@@ -4,10 +4,12 @@ from dataclasses import dataclass
 from pathlib import Path
 import logging
 import tempfile
+from typing import Any
 
 from kerykeion import AstrologicalSubjectFactory, ChartDataFactory
 from kerykeion.charts.chart_drawer import ChartDrawer
 
+from bot.services.chart_constants import PDF_ACTIVE_ASPECTS, PDF_ACTIVE_POINTS
 from bot.services.geocoding import BirthLocation
 
 logger = logging.getLogger(__name__)
@@ -41,10 +43,23 @@ PLANET_RU = {
     "Chiron": "Хирон",
     "Mean_Node": "Северный узел",
     "True_Node": "Северный узел",
-    "Mean_South_Node": "Южный узел",
-    "True_South_Node": "Южный узел",
+    "Mean_North_Lunar_Node": "Северный узел",
+    "True_North_Lunar_Node": "Северный узел",
+    "Mean_South_Lunar_Node": "Южный узел",
+    "True_South_Lunar_Node": "Южный узел",
+    "Mean_Lilith": "Чёрная Луна (Лилит)",
+    "True_Lilith": "Чёрная Луна (Лилит)",
     "Ascendant": "Асцендент",
-    "Medium_Coeli": "MC",
+    "Descendant": "Десцендент",
+    "Medium_Coeli": "MC (Середина неба)",
+    "Imum_Coeli": "IC (Глубина неба)",
+    "Vertex": "Вертекс",
+    "Pars_Fortunae": "Парс Фортуны",
+    "Ceres": "Церера",
+    "Pallas": "Паллада",
+    "Juno": "Юнона",
+    "Vesta": "Веста",
+    "Pholus": "Фолус",
 }
 
 
@@ -73,12 +88,22 @@ def build_subject_payload(natal: NatalInput) -> dict:
         "timezone": loc.timezone,
         "longitude": loc.longitude,
         "latitude": loc.latitude,
+        "houses_system_identifier": "P",
     }
 
 
-def compute_natal_chart(natal: NatalInput):
+def _api_chart_payload(natal: NatalInput) -> dict:
+    return {
+        "subject": build_subject_payload(natal),
+        "active_points": list(PDF_ACTIVE_POINTS),
+        "active_aspects": list(PDF_ACTIVE_ASPECTS),
+        "distribution_method": "weighted",
+    }
+
+
+def create_subject(natal: NatalInput):
     loc = natal.location
-    subject = AstrologicalSubjectFactory.from_birth_data(
+    return AstrologicalSubjectFactory.from_birth_data(
         natal.name,
         natal.year,
         natal.month,
@@ -89,8 +114,25 @@ def compute_natal_chart(natal: NatalInput):
         lat=loc.latitude,
         tz_str=loc.timezone,
         online=False,
+        active_points=list(PDF_ACTIVE_POINTS),
     )
-    return ChartDataFactory.create_natal_chart_data(subject)
+
+
+def compute_natal_chart(natal: NatalInput):
+    subject = create_subject(natal)
+    return ChartDataFactory.create_natal_chart_data(
+        subject,
+        active_points=list(PDF_ACTIVE_POINTS),
+        active_aspects=list(PDF_ACTIVE_ASPECTS),
+    )
+
+
+def chart_data_as_dict(chart_data: Any) -> dict[str, Any]:
+    if isinstance(chart_data, dict):
+        return chart_data
+    if hasattr(chart_data, "model_dump"):
+        return chart_data.model_dump()
+    return {}
 
 
 def render_local_svg(chart_data, filename: str = "natal") -> Path:
@@ -128,99 +170,3 @@ def _house_ru(house: str | None) -> str:
         "Twelfth_House": "12",
     }
     return numeral.get(house, house.replace("_", " "))
-
-
-def format_chart_summary(natal: NatalInput, chart_data) -> str:
-    lines: list[str] = [
-        f"<b>Натальная карта — {natal.name}</b>",
-        "",
-        f"📅 {natal.day:02d}.{natal.month:02d}.{natal.year} в {natal.hour:02d}:{natal.minute:02d}",
-        f"📍 {natal.location.display_name}",
-        f"🕐 {natal.location.timezone}",
-        "",
-        "<b>Планеты в знаках</b>",
-    ]
-
-    subject = getattr(chart_data, "subject", None)
-    if hasattr(subject, "model_dump"):
-        bodies = subject.model_dump()
-    elif isinstance(subject, dict):
-        bodies = subject
-    else:
-        bodies = {}
-
-    for key in (
-        "sun",
-        "moon",
-        "mercury",
-        "venus",
-        "mars",
-        "jupiter",
-        "saturn",
-        "uranus",
-        "neptune",
-        "pluto",
-        "chiron",
-        "true_north_lunar_node",
-        "true_south_lunar_node",
-        "mean_lilith",
-    ):
-        body = bodies.get(key)
-        if not body or not isinstance(body, dict):
-            continue
-        label = _planet_ru(body.get("name", key))
-        sign = _sign_ru(body.get("sign"))
-        house = _house_ru(body.get("house"))
-        pos = body.get("position")
-        retro = " ℞" if body.get("retrograde") else ""
-        house_part = f", {house} дом" if house else ""
-        pos_part = f" ({pos:.1f}°)" if isinstance(pos, (int, float)) else ""
-        lines.append(f"• {label}: {sign}{house_part}{pos_part}{retro}")
-
-    asc = bodies.get("ascendant")
-    if asc:
-        lines.append(f"• Асцендент: {_sign_ru(asc.get('sign'))}")
-
-    mc = bodies.get("medium_coeli")
-    if mc:
-        lines.append(f"• MC: {_sign_ru(mc.get('sign'))}")
-
-    aspects = getattr(chart_data, "aspects", []) or []
-    major = [a for a in aspects if getattr(a, "aspect", None) or (isinstance(a, dict) and a.get("aspect"))]
-    if major:
-        lines.extend(["", "<b>Ключевые аспекты</b>"])
-        shown = 0
-        for item in major:
-            if shown >= 12:
-                lines.append("• …")
-                break
-            if hasattr(item, "model_dump"):
-                item = item.model_dump()
-            p1 = _planet_ru(str(item.get("p1_name") or item.get("p1") or ""))
-            p2 = _planet_ru(str(item.get("p2_name") or item.get("p2") or ""))
-            aspect = item.get("aspect") or item.get("name") or ""
-            orb = item.get("orbit") or item.get("orb")
-            orb_s = f" (орб {orb:.1f}°)" if isinstance(orb, (int, float)) else ""
-            lines.append(f"• {p1} — {aspect} — {p2}{orb_s}")
-            shown += 1
-
-    elem = getattr(chart_data, "element_distribution", None)
-    if elem is not None:
-        if hasattr(elem, "model_dump"):
-            elem = elem.model_dump()
-        lines.extend(
-            [
-                "",
-                "<b>Стихии</b>",
-                f"Огонь {getattr(elem, 'fire_percentage', elem.get('fire_percentage', '—'))}% · "
-                f"Земля {getattr(elem, 'earth_percentage', elem.get('earth_percentage', '—'))}% · "
-                f"Воздух {getattr(elem, 'air_percentage', elem.get('air_percentage', '—'))}% · "
-                f"Вода {getattr(elem, 'water_percentage', elem.get('water_percentage', '—'))}%",
-            ]
-        )
-
-    lines.append("")
-    lines.append(
-        "<i>Расчёт: Kerykeion (Swiss Ephemeris). Карта на изображении — Astrologer API.</i>"
-    )
-    return "\n".join(lines)

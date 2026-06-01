@@ -12,13 +12,14 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from bot.services.ai_interpreter import AiInterpreter
 from bot.services.astrologer_api import AstrologerApiError, AstrologerClient, svg_to_temp_file
 from bot.config import Settings
+from bot.services.chart_report import NatalReportData, build_natal_report, report_to_plain_text
 from bot.services.geocoding import (
     parse_birth_date,
     parse_birth_time,
     resolve_place,
     resolve_place_with_geonames,
 )
-from bot.services.kerykeion_chart import NatalInput, compute_natal_chart, format_chart_summary
+from bot.services.kerykeion_chart import NatalInput, chart_data_as_dict, compute_natal_chart
 from bot.states import NatalChartStates
 
 logger = logging.getLogger(__name__)
@@ -108,7 +109,9 @@ async def on_birth_nation(
     await state.clear()
 
     user_id = message.from_user.id if message.from_user else 0
-    wait_msg = await message.answer("⏳ Считаю натальную карту…")
+    wait_msg = await message.answer(
+        "⏳ Считаю натальную карту (планеты, аспекты, фаза Луны, транзиты)…"
+    )
 
     try:
         location = resolve_place(data["city"], nation)
@@ -143,27 +146,44 @@ async def on_birth_nation(
         location=location,
     )
 
+    local_chart = None
     try:
-        chart_data = compute_natal_chart(natal)
+        local_chart = compute_natal_chart(natal)
     except Exception:
         logger.exception("Kerykeion calculation failed")
+
+    api_pkg: dict = {}
+    try:
+        api_pkg = await astrologer.fetch_complete_natal_package(natal)
+    except Exception:
+        logger.exception("Astrologer API package failed")
+
+    chart_data_dict = api_pkg.get("chart_data")
+    if chart_data_dict:
+        if hasattr(chart_data_dict, "model_dump"):
+            chart_data_dict = chart_data_dict.model_dump()
+    elif local_chart:
+        chart_data_dict = chart_data_as_dict(local_chart)
+    else:
         await wait_msg.edit_text("Ошибка расчёта карты. Проверьте дату, время и место.")
         return
 
-    summary = format_chart_summary(natal, chart_data)
-    svg_path = None
-    svg_content = ""
+    report_data = NatalReportData(
+        chart_data=chart_data_dict,
+        moon_phase=api_pkg.get("moon_phase"),
+        transit_aspects=api_pkg.get("transit_aspects"),
+    )
+    report_messages = build_natal_report(natal, report_data)
+    plain_report = report_to_plain_text(report_messages)
 
-    try:
-        svg_content, _api_data = await astrologer.fetch_birth_chart_svg(natal)
-        svg_path = svg_to_temp_file(svg_content)
-    except AstrologerApiError as exc:
-        logger.warning("RapidAPI chart failed: %s", exc)
-        svg_path = await astrologer.save_chart_png_fallback(natal, chart_data)
-        if svg_path:
-            summary += "\n\n<i>⚠️ Карта с сервера недоступна, приложен локальный SVG.</i>"
-        else:
-            summary += f"\n\n<i>⚠️ {exc}</i>"
+    svg_path = None
+    if api_pkg.get("svg"):
+        svg_path = svg_to_temp_file(api_pkg["svg"])
+    elif local_chart:
+        try:
+            svg_path = await astrologer.save_chart_png_fallback(natal, local_chart)
+        except Exception:
+            pass
 
     await wait_msg.delete()
 
@@ -171,12 +191,14 @@ async def on_birth_nation(
         doc = BufferedInputFile(svg_path.read_bytes(), filename="natal_chart.svg")
         await message.answer_document(doc, caption="🎴 Натальная карта")
 
-    await message.answer(summary)
+    for idx, part in enumerate(report_messages):
+        prefix = f"<b>Отчёт ({idx + 1}/{len(report_messages)})</b>\n\n" if len(report_messages) > 1 else ""
+        await message.answer(prefix + part)
 
     if ai.enabled and user_id:
         _pending_interpret[user_id] = {
             "name": natal.name,
-            "summary_plain": _strip_html(summary),
+            "summary_plain": plain_report,
         }
         builder = InlineKeyboardBuilder()
         builder.button(text="📜 Полная ИИ-расшифровка", callback_data="interpret:1")
