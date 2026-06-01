@@ -164,7 +164,7 @@ class AstrologerClient:
 
         return result
 
-    async def save_chart_png_fallback(self, natal: NatalInput, chart_data) -> Path | None:
+    async def save_chart_svg_fallback(self, natal: NatalInput, chart_data) -> Path | None:
         from bot.services.kerykeion_chart import render_local_svg
 
         try:
