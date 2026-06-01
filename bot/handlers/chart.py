@@ -5,24 +5,32 @@ import logging
 from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message
+from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
 from bot.config import Settings
+from bot.keyboards import SHOW_NATAL_DATA_CALLBACK, after_analysis_kb
 from bot.services.ai_interpreter import AiInterpreter
-from bot.services.astrologer_api import AstrologerClient
-from bot.services.chart_report import NatalReportData, build_natal_report, report_to_plain_text
+from bot.services.astrologer_api import AstrologerClient, svg_to_temp_file
 from bot.services.geocoding import (
     parse_birth_date,
     parse_birth_time,
     resolve_place,
     resolve_place_with_geonames,
 )
-from bot.services.kerykeion_chart import NatalInput, chart_data_as_dict, compute_natal_chart
+from bot.services.kerykeion_chart import NatalInput
 from bot.services.messaging import send_long_text
+from bot.services.natal_bundle import (
+    NatalChartBundle,
+    build_natal_bundle,
+    bundle_plain_text_for_ai,
+    bundle_report_messages,
+)
 from bot.states import NatalChartStates
 
 logger = logging.getLogger(__name__)
 router = Router()
+
+_last_natal_bundle: dict[int, NatalChartBundle] = {}
 
 
 async def _start_chart_flow(message: Message, state: FSMContext) -> None:
@@ -91,36 +99,30 @@ async def on_birth_place(message: Message, state: FSMContext) -> None:
     )
 
 
-async def _gather_chart_text(
-    natal: NatalInput,
-    astrologer: AstrologerClient,
-) -> str:
-    local_chart = None
-    try:
-        local_chart = compute_natal_chart(natal)
-    except Exception:
-        logger.exception("Kerykeion calculation failed")
+async def _send_natal_data(message: Message, bundle: NatalChartBundle, astrologer: AstrologerClient) -> None:
+    natal = bundle.natal
+    svg_path = None
 
-    api_pkg: dict = {}
-    try:
-        api_pkg = await astrologer.fetch_complete_natal_package(natal)
-    except Exception:
-        logger.exception("Astrologer API package failed")
+    if bundle.svg_content:
+        svg_path = svg_to_temp_file(bundle.svg_content)
+    elif bundle.local_chart:
+        try:
+            svg_path = await astrologer.save_chart_png_fallback(natal, bundle.local_chart)
+        except Exception:
+            logger.exception("Local SVG fallback failed")
 
-    chart_data_dict = api_pkg.get("chart_data")
-    if chart_data_dict and hasattr(chart_data_dict, "model_dump"):
-        chart_data_dict = chart_data_dict.model_dump()
-    elif local_chart:
-        chart_data_dict = chart_data_as_dict(local_chart)
+    if svg_path and svg_path.exists():
+        doc = BufferedInputFile(svg_path.read_bytes(), filename="natal_chart.svg")
+        await message.answer_document(doc, caption="🎴 Натальная карта")
     else:
-        raise RuntimeError("Не удалось рассчитать натальную карту.")
+        await message.answer(
+            "<i>SVG карты недоступен. Ниже — все расчётные данные.</i>"
+        )
 
-    report_data = NatalReportData(
-        chart_data=chart_data_dict,
-        moon_phase=api_pkg.get("moon_phase"),
-        transit_aspects=api_pkg.get("transit_aspects"),
-    )
-    return report_to_plain_text(build_natal_report(natal, report_data))
+    report_messages = bundle_report_messages(bundle)
+    for idx, part in enumerate(report_messages):
+        prefix = f"<b>Натальные данные ({idx + 1}/{len(report_messages)})</b>\n\n" if len(report_messages) > 1 else ""
+        await message.answer(prefix + part)
 
 
 @router.message(NatalChartStates.birth_nation)
@@ -140,6 +142,7 @@ async def on_birth_nation(
     data = await state.get_data()
     await state.clear()
 
+    user_id = message.from_user.id if message.from_user else 0
     wait_msg = await message.answer(
         "⏳ Рассчитываю карту и готовлю <b>описание личности и предназначения</b>…\n"
         "<i>Это займёт 3–7 минут.</i>"
@@ -179,10 +182,15 @@ async def on_birth_nation(
     )
 
     try:
-        chart_text = await _gather_chart_text(natal, astrologer)
+        bundle = await build_natal_bundle(natal, astrologer)
     except RuntimeError as exc:
         await wait_msg.edit_text(str(exc))
         return
+
+    if user_id:
+        _last_natal_bundle[user_id] = bundle
+
+    chart_text = bundle_plain_text_for_ai(bundle)
 
     try:
         await wait_msg.edit_text(
@@ -202,3 +210,35 @@ async def on_birth_nation(
         f"{natal.hour:02d}:{natal.minute:02d} · {natal.location.display_name}"
     )
     await send_long_text(message, personality_text, title="Анализ")
+    await message.answer(
+        "Натальная карта и технические данные (планеты, аспекты, паттерны) "
+        "можно открыть по кнопке ниже.",
+        reply_markup=after_analysis_kb(),
+    )
+
+
+@router.callback_query(F.data == SHOW_NATAL_DATA_CALLBACK)
+async def on_show_natal_data(
+    callback: CallbackQuery,
+    astrologer: AstrologerClient,
+) -> None:
+    user_id = callback.from_user.id if callback.from_user else 0
+    bundle = _last_natal_bundle.get(user_id)
+    if not bundle:
+        await callback.answer(
+            "Данные устарели. Сначала пройдите анализ заново (/chart).",
+            show_alert=True,
+        )
+        return
+
+    await callback.answer()
+    status = await callback.message.answer("⏳ Открываю натальные данные…")
+
+    try:
+        await _send_natal_data(callback.message, bundle, astrologer)
+    except Exception as exc:
+        logger.exception("Show natal data failed")
+        await status.edit_text(f"Не удалось показать данные: {exc}")
+        return
+
+    await status.delete()
