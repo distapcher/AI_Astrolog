@@ -10,8 +10,7 @@ from aiogram.types import BufferedInputFile, CallbackQuery, Message
 from bot.config import Settings
 from bot.keyboards import SHOW_NATAL_DATA_CALLBACK, after_analysis_kb
 from bot.services.ai_interpreter import AiInterpreter
-from bot.services.astrologer_api import AstrologerClient
-from bot.services.chart_image import ChartImageError, svg_to_png_bytes
+from bot.services.astrologer_api import AstrologerClient, svg_to_temp_file
 from bot.services.geocoding import (
     parse_birth_date,
     parse_birth_time,
@@ -101,40 +100,25 @@ async def on_birth_place(message: Message, state: FSMContext) -> None:
     )
 
 
-async def _send_natal_chart_png(message: Message, bundle: NatalChartBundle, astrologer: AstrologerClient) -> None:
-    svg_content = bundle.svg_content
+async def _send_natal_data(message: Message, bundle: NatalChartBundle, astrologer: AstrologerClient) -> None:
+    natal = bundle.natal
+    svg_path = None
 
-    if not svg_content and bundle.local_chart:
+    if bundle.svg_content:
+        svg_path = svg_to_temp_file(bundle.svg_content)
+    elif bundle.local_chart:
         try:
-            svg_path = await astrologer.save_chart_svg_fallback(bundle.natal, bundle.local_chart)
-            if svg_path and svg_path.exists():
-                svg_content = svg_path.read_text(encoding="utf-8")
+            svg_path = await astrologer.save_chart_svg_fallback(natal, bundle.local_chart)
         except Exception:
-            logger.exception("Local SVG render failed")
+            logger.exception("Local SVG fallback failed")
 
-    if svg_content:
-        try:
-            png_bytes = svg_to_png_bytes(svg_content)
-            photo = BufferedInputFile(png_bytes, filename="natal_chart.png")
-            await message.answer_photo(photo, caption="🎴 Натальная карта")
-        except ChartImageError as exc:
-            logger.warning("SVG to PNG failed: %s", exc)
-            await message.answer(
-                "<i>Не удалось подготовить изображение карты. Ниже — расчётные данные.</i>"
-            )
-        except Exception:
-            logger.exception("SVG to PNG failed")
-            await message.answer(
-                "<i>Не удалось подготовить изображение карты. Ниже — расчётные данные.</i>"
-            )
+    if svg_path and svg_path.exists():
+        doc = BufferedInputFile(svg_path.read_bytes(), filename="natal_chart.svg")
+        await message.answer_document(doc, caption="🎴 Натальная карта")
     else:
         await message.answer(
-            "<i>Карта недоступна. Ниже — все расчётные данные.</i>"
+            "<i>SVG карты недоступен. Ниже — все расчётные данные.</i>"
         )
-
-
-async def _send_natal_data(message: Message, bundle: NatalChartBundle, astrologer: AstrologerClient) -> None:
-    await _send_natal_chart_png(message, bundle, astrologer)
 
     report_messages = bundle_report_messages(bundle)
     for idx, part in enumerate(report_messages):

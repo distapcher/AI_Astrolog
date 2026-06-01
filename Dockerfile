@@ -7,8 +7,6 @@ WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
-    librsvg2-bin \
-    libcairo2 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml README.md /app/
