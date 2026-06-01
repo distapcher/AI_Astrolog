@@ -4,7 +4,7 @@ import logging
 
 import httpx
 
-from bot.config import Settings, PROMPT_PATH
+from bot.config import Settings
 
 logger = logging.getLogger(__name__)
 
@@ -18,15 +18,26 @@ class AiInterpreter:
     def enabled(self) -> bool:
         return self._enabled
 
-    async def interpret(self, name: str, chart_text: str) -> str:
-        if not self._enabled:
-            raise RuntimeError("ИИ-расшифровка не настроена (нет OPENAI_API_KEY)")
+    def _load_system_prompt(self) -> str:
+        path = self._settings.personality_prompt_path
+        if path.exists():
+            return path.read_text(encoding="utf-8")
+        logger.warning("Personality prompt not found: %s", path)
+        return ""
 
-        system_prompt = PROMPT_PATH.read_text(encoding="utf-8") if PROMPT_PATH.exists() else ""
+    async def interpret_personality(self, name: str, chart_text: str) -> str:
+        """Расшифровка предназначения и профессии по промпту astrolog_prof_ru."""
+        if not self._enabled:
+            raise RuntimeError("ИИ не настроен (нет OPENAI_API_KEY)")
+
+        system_prompt = self._load_system_prompt()
+        if not system_prompt:
+            raise RuntimeError("Файл системного промпта не найден.")
+
         user_content = (
             f"Имя: {name}\n\n"
-            f"Данные натальной карты (рассчитаны Kerykeion):\n\n{chart_text}\n\n"
-            "Проведи полный анализ по структуре из системного промпта."
+            f"Полные данные натальной карты для анализа:\n\n{chart_text}\n\n"
+            "Проведи анализ строго по структуре из системного промпта (все 10 разделов)."
         )
 
         url = f"{self._settings.openai_base_url.rstrip('/')}/chat/completions"
@@ -40,16 +51,16 @@ class AiInterpreter:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_content},
             ],
-            "max_tokens": 8000,
+            "max_tokens": self._settings.ai_max_tokens,
             "temperature": 0.7,
         }
 
-        async with httpx.AsyncClient(timeout=300.0) as client:
+        async with httpx.AsyncClient(timeout=600.0) as client:
             response = await client.post(url, json=body, headers=headers)
 
         if response.status_code >= 400:
-            logger.error("LLM error %s: %s", response.status_code, response.text[:300])
-            raise RuntimeError("Не удалось получить расшифровку от ИИ.")
+            logger.error("LLM error %s: %s", response.status_code, response.text[:500])
+            raise RuntimeError("Не удалось получить описание от ИИ.")
 
         data = response.json()
         choices = data.get("choices") or []

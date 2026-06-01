@@ -1,17 +1,15 @@
 from __future__ import annotations
 
 import logging
-import re
 
 from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
-from aiogram.types import BufferedInputFile, CallbackQuery, Message
-from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.types import Message
 
-from bot.services.ai_interpreter import AiInterpreter
-from bot.services.astrologer_api import AstrologerApiError, AstrologerClient, svg_to_temp_file
 from bot.config import Settings
+from bot.services.ai_interpreter import AiInterpreter
+from bot.services.astrologer_api import AstrologerClient
 from bot.services.chart_report import NatalReportData, build_natal_report, report_to_plain_text
 from bot.services.geocoding import (
     parse_birth_date,
@@ -20,31 +18,29 @@ from bot.services.geocoding import (
     resolve_place_with_geonames,
 )
 from bot.services.kerykeion_chart import NatalInput, chart_data_as_dict, compute_natal_chart
+from bot.services.messaging import send_long_text
 from bot.states import NatalChartStates
 
 logger = logging.getLogger(__name__)
 router = Router()
-
-_pending_interpret: dict[int, dict[str, str]] = {}
-
-_HTML_TAG_RE = re.compile(r"<[^>]+>")
-
-
-def _strip_html(text: str) -> str:
-    return _HTML_TAG_RE.sub("", text)
 
 
 async def _start_chart_flow(message: Message, state: FSMContext) -> None:
     await state.clear()
     await state.set_state(NatalChartStates.name)
     await message.answer(
-        "Введите <b>имя</b> для карты (или «—», если без имени):",
+        "Введите <b>имя</b> для анализа (или «—», если без имени):",
     )
 
 
 @router.message(Command("chart"))
-@router.message(F.text == "🌟 Натальная карта")
-async def start_chart(message: Message, state: FSMContext) -> None:
+@router.message(F.text.in_({"🌟 Натальная карта", "🔮 Анализ личности"}))
+async def start_chart(message: Message, state: FSMContext, ai: AiInterpreter) -> None:
+    if not ai.enabled:
+        await message.answer(
+            "Сервис анализа временно недоступен: не настроен <code>OPENAI_API_KEY</code>."
+        )
+        return
     await _start_chart_flow(message, state)
 
 
@@ -95,6 +91,38 @@ async def on_birth_place(message: Message, state: FSMContext) -> None:
     )
 
 
+async def _gather_chart_text(
+    natal: NatalInput,
+    astrologer: AstrologerClient,
+) -> str:
+    local_chart = None
+    try:
+        local_chart = compute_natal_chart(natal)
+    except Exception:
+        logger.exception("Kerykeion calculation failed")
+
+    api_pkg: dict = {}
+    try:
+        api_pkg = await astrologer.fetch_complete_natal_package(natal)
+    except Exception:
+        logger.exception("Astrologer API package failed")
+
+    chart_data_dict = api_pkg.get("chart_data")
+    if chart_data_dict and hasattr(chart_data_dict, "model_dump"):
+        chart_data_dict = chart_data_dict.model_dump()
+    elif local_chart:
+        chart_data_dict = chart_data_as_dict(local_chart)
+    else:
+        raise RuntimeError("Не удалось рассчитать натальную карту.")
+
+    report_data = NatalReportData(
+        chart_data=chart_data_dict,
+        moon_phase=api_pkg.get("moon_phase"),
+        transit_aspects=api_pkg.get("transit_aspects"),
+    )
+    return report_to_plain_text(build_natal_report(natal, report_data))
+
+
 @router.message(NatalChartStates.birth_nation)
 async def on_birth_nation(
     message: Message,
@@ -103,14 +131,18 @@ async def on_birth_nation(
     ai: AiInterpreter,
     settings: Settings,
 ) -> None:
+    if not ai.enabled:
+        await message.answer("ИИ-анализ недоступен: не настроен API ключ.")
+        return
+
     nation_raw = (message.text or "").strip()
     nation = "RU" if nation_raw in {"", "—", "-", "ru", "RU"} else nation_raw
     data = await state.get_data()
     await state.clear()
 
-    user_id = message.from_user.id if message.from_user else 0
     wait_msg = await message.answer(
-        "⏳ Считаю натальную карту (планеты, аспекты, фаза Луны, транзиты)…"
+        "⏳ Рассчитываю карту и готовлю <b>описание личности и предназначения</b>…\n"
+        "<i>Это займёт 3–7 минут.</i>"
     )
 
     try:
@@ -146,97 +178,27 @@ async def on_birth_nation(
         location=location,
     )
 
-    local_chart = None
     try:
-        local_chart = compute_natal_chart(natal)
-    except Exception:
-        logger.exception("Kerykeion calculation failed")
-
-    api_pkg: dict = {}
-    try:
-        api_pkg = await astrologer.fetch_complete_natal_package(natal)
-    except Exception:
-        logger.exception("Astrologer API package failed")
-
-    chart_data_dict = api_pkg.get("chart_data")
-    if chart_data_dict:
-        if hasattr(chart_data_dict, "model_dump"):
-            chart_data_dict = chart_data_dict.model_dump()
-    elif local_chart:
-        chart_data_dict = chart_data_as_dict(local_chart)
-    else:
-        await wait_msg.edit_text("Ошибка расчёта карты. Проверьте дату, время и место.")
+        chart_text = await _gather_chart_text(natal, astrologer)
+    except RuntimeError as exc:
+        await wait_msg.edit_text(str(exc))
         return
 
-    report_data = NatalReportData(
-        chart_data=chart_data_dict,
-        moon_phase=api_pkg.get("moon_phase"),
-        transit_aspects=api_pkg.get("transit_aspects"),
-    )
-    report_messages = build_natal_report(natal, report_data)
-    plain_report = report_to_plain_text(report_messages)
-
-    svg_path = None
-    if api_pkg.get("svg"):
-        svg_path = svg_to_temp_file(api_pkg["svg"])
-    elif local_chart:
-        try:
-            svg_path = await astrologer.save_chart_png_fallback(natal, local_chart)
-        except Exception:
-            pass
+    try:
+        await wait_msg.edit_text(
+            "⏳ Карта рассчитана. ИИ пишет описание по 10 разделам…\n"
+            "<i>Ещё 2–5 минут.</i>"
+        )
+        personality_text = await ai.interpret_personality(natal.name, chart_text)
+    except Exception as exc:
+        logger.exception("AI personality analysis failed")
+        await wait_msg.edit_text(f"Не удалось получить описание: {exc}")
+        return
 
     await wait_msg.delete()
-
-    if svg_path and svg_path.exists():
-        doc = BufferedInputFile(svg_path.read_bytes(), filename="natal_chart.svg")
-        await message.answer_document(doc, caption="🎴 Натальная карта")
-
-    for idx, part in enumerate(report_messages):
-        prefix = f"<b>Отчёт ({idx + 1}/{len(report_messages)})</b>\n\n" if len(report_messages) > 1 else ""
-        await message.answer(prefix + part)
-
-    if ai.enabled and user_id:
-        _pending_interpret[user_id] = {
-            "name": natal.name,
-            "summary_plain": plain_report,
-        }
-        builder = InlineKeyboardBuilder()
-        builder.button(text="📜 Полная ИИ-расшифровка", callback_data="interpret:1")
-        await message.answer(
-            "Могу подготовить подробную расшифровку по 10 разделам (нужно 2–5 минут).",
-            reply_markup=builder.as_markup(),
-        )
-    else:
-        await message.answer(
-            "Для полной ИИ-расшифровки добавьте <code>OPENAI_API_KEY</code> в настройки бота.",
-        )
-
-
-@router.callback_query(F.data.startswith("interpret:"))
-async def on_interpret(callback: CallbackQuery, ai: AiInterpreter) -> None:
-    if not ai.enabled:
-        await callback.answer("ИИ не настроен", show_alert=True)
-        return
-
-    user_id = callback.from_user.id if callback.from_user else 0
-    pending = _pending_interpret.get(user_id)
-    if not pending:
-        await callback.answer("Данные устарели. Постройте карту заново.", show_alert=True)
-        return
-
-    await callback.answer()
-    status = await callback.message.answer("⏳ Готовлю расшифровку… это может занять несколько минут.")
-
-    try:
-        text = await ai.interpret(pending["name"], pending["summary_plain"])
-    except Exception as exc:
-        logger.exception("AI interpret failed")
-        await status.edit_text(f"Не удалось получить расшифровку: {exc}")
-        return
-
-    chunk_size = 4000
-    parts = [text[i : i + chunk_size] for i in range(0, len(text), chunk_size)] or ["(пусто)"]
-    await status.delete()
-    for idx, part in enumerate(parts):
-        prefix = f"<b>Расшифровка ({idx + 1}/{len(parts)})</b>\n\n" if len(parts) > 1 else ""
-        await callback.message.answer(prefix + part)
+    await message.answer(
+        f"<b>Описание личности и предназначения — {natal.name}</b>\n"
+        f"📅 {natal.day:02d}.{natal.month:02d}.{natal.year}, "
+        f"{natal.hour:02d}:{natal.minute:02d} · {natal.location.display_name}"
+    )
+    await send_long_text(message, personality_text, title="Анализ")

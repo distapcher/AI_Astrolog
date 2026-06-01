@@ -7,7 +7,7 @@ import os
 load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-PROMPT_PATH = BASE_DIR / "prompts" / "natal_interpretation_ru.md"
+PERSONALITY_PROMPT_PATH = BASE_DIR / "prompts" / "astrolog_prof_ru.md"
 
 
 @dataclass(frozen=True)
@@ -21,6 +21,8 @@ class Settings:
     openai_base_url: str
     openai_model: str
     geonames_username: str | None
+    personality_prompt_path: Path
+    ai_max_tokens: int
 
 
 def load_settings() -> Settings:
@@ -33,6 +35,7 @@ def load_settings() -> Settings:
         raise ValueError("RAPIDAPI_KEY is not set")
 
     openai_key = os.getenv("OPENAI_API_KEY", "").strip() or None
+    prompt_path = Path(os.getenv("PERSONALITY_PROMPT_PATH", str(PERSONALITY_PROMPT_PATH)))
 
     return Settings(
         bot_token=bot_token,
@@ -44,4 +47,6 @@ def load_settings() -> Settings:
         openai_base_url=os.getenv("OPENAI_BASE_URL", "https://api.deepseek.com/v1").strip(),
         openai_model=os.getenv("OPENAI_MODEL", "deepseek-chat").strip(),
         geonames_username=os.getenv("GEONAMES_USERNAME", "").strip() or None,
+        personality_prompt_path=prompt_path,
+        ai_max_tokens=int(os.getenv("AI_MAX_TOKENS", "12000")),
     )

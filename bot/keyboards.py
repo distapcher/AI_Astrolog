@@ -4,7 +4,7 @@ from aiogram.types import KeyboardButton, ReplyKeyboardMarkup, ReplyKeyboardRemo
 def main_menu_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="🌟 Натальная карта")],
+            [KeyboardButton(text="🔮 Анализ личности")],
             [KeyboardButton(text="ℹ️ Помощь")],
         ],
         resize_keyboard=True,

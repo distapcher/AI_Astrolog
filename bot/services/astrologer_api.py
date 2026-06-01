@@ -128,20 +128,23 @@ class AstrologerClient:
             key=lambda x: float(x.get("orbit") or 99),
         )
 
-    async def fetch_complete_natal_package(self, natal: NatalInput) -> dict[str, Any]:
-        """SVG + chart_data + moon phase + transits (best effort)."""
+    async def fetch_complete_natal_package(
+        self, natal: NatalInput, *, include_svg: bool = False
+    ) -> dict[str, Any]:
+        """chart_data + moon phase + transits; SVG только если include_svg=True."""
         result: dict[str, Any] = {
             "svg": "",
             "chart_data": None,
             "moon_phase": None,
             "transit_aspects": None,
         }
-        try:
-            svg, raw = await self.fetch_birth_chart_svg(natal)
-            result["svg"] = svg
-            result["chart_data"] = raw.get("chart_data")
-        except AstrologerApiError as exc:
-            logger.warning("birth-chart SVG: %s", exc)
+        if include_svg:
+            try:
+                svg, raw = await self.fetch_birth_chart_svg(natal)
+                result["svg"] = svg
+                result["chart_data"] = raw.get("chart_data")
+            except AstrologerApiError as exc:
+                logger.warning("birth-chart SVG: %s", exc)
 
         if not result["chart_data"]:
             try:
