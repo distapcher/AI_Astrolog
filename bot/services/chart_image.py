@@ -50,8 +50,13 @@ def svg_to_png_bytes(svg_content: str, *, width: int = DEFAULT_WIDTH) -> bytes:
             _rsvg_convert(svg_path, png_path, width)
             return png_path.read_bytes()
 
-    logger.warning("rsvg-convert not found, trying cairosvg")
-    return _cairosvg_convert(svg_content, width)
+    logger.info("rsvg-convert not found, using cairosvg")
+    try:
+        return _cairosvg_convert(svg_content, width)
+    except ChartImageError as exc:
+        raise ChartImageError(
+            "Нет конвертера SVG→PNG (librsvg2-bin + libcairo2 или cairosvg)."
+        ) from exc
 
 
 def svg_file_to_png_bytes(svg_path: Path, *, width: int = DEFAULT_WIDTH) -> bytes:
