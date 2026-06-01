@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+logger = logging.getLogger(__name__)
+
 DEFAULT_ANALYTICS_DB = Path("/data/analytics.db")
+_db_path: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -42,10 +47,18 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
+def _resolve_path(db_path: Path | None) -> Path:
+    return db_path or _db_path or DEFAULT_ANALYTICS_DB
+
+
 def init_analytics_db(path: Path | None = None) -> Path:
-    db_path = path or DEFAULT_ANALYTICS_DB
+    global _db_path
+    db_path = _resolve_path(path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    with sqlite3.connect(db_path) as conn:
+    with sqlite3.connect(db_path, timeout=30) as conn:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA busy_timeout=5000")
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS bot_users (
@@ -65,7 +78,15 @@ def init_analytics_db(path: Path | None = None) -> Path:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_bot_users_last_seen ON bot_users(last_seen_at DESC)"
         )
+    _db_path = db_path
     return db_path
+
+
+def _connect(db_path: Path | None = None) -> sqlite3.Connection:
+    path = _resolve_path(db_path)
+    if _db_path is None:
+        init_analytics_db(path)
+    return sqlite3.connect(path, timeout=30)
 
 
 def upsert_telegram_user(
@@ -78,9 +99,8 @@ def upsert_telegram_user(
 ) -> None:
     if not user_id:
         return
-    path = init_analytics_db(db_path)
     now = _now_iso()
-    with sqlite3.connect(path) as conn:
+    with _connect(db_path) as conn:
         conn.execute(
             """
             INSERT INTO bot_users (
@@ -114,12 +134,10 @@ def _ensure_user_row(conn: sqlite3.Connection, user_id: int) -> None:
 
 
 def record_personality_analysis_start(user_id: int, db_path: Path | None = None) -> None:
-    """Учитывает запуск анализа личности (включая неуспешные)."""
     if not user_id:
         return
-    path = init_analytics_db(db_path)
     now = _now_iso()
-    with sqlite3.connect(path) as conn:
+    with _connect(db_path) as conn:
         _ensure_user_row(conn, user_id)
         conn.execute(
             """
@@ -142,12 +160,11 @@ def add_token_usage(
 ) -> None:
     if not user_id:
         return
-    path = init_analytics_db(db_path)
     if total_tokens <= 0 and (prompt_tokens > 0 or completion_tokens > 0):
         total_tokens = prompt_tokens + completion_tokens
     if total_tokens <= 0 and prompt_tokens <= 0 and completion_tokens <= 0:
         return
-    with sqlite3.connect(path) as conn:
+    with _connect(db_path) as conn:
         _ensure_user_row(conn, user_id)
         conn.execute(
             """
@@ -163,8 +180,7 @@ def add_token_usage(
 
 
 def list_user_stats(db_path: Path | None = None) -> list[UserStats]:
-    path = init_analytics_db(db_path)
-    with sqlite3.connect(path) as conn:
+    with _connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             """
@@ -194,8 +210,7 @@ def list_user_stats(db_path: Path | None = None) -> list[UserStats]:
 
 
 def dashboard_totals(db_path: Path | None = None) -> dict[str, int]:
-    path = init_analytics_db(db_path)
-    with sqlite3.connect(path) as conn:
+    with _connect(db_path) as conn:
         row = conn.execute(
             """
             SELECT
@@ -214,3 +229,100 @@ def dashboard_totals(db_path: Path | None = None) -> dict[str, int]:
         "completion_tokens": int(row[3]),
         "total_tokens": int(row[4]),
     }
+
+
+async def upsert_telegram_user_async(
+    user_id: int,
+    *,
+    username: str | None = None,
+    first_name: str | None = None,
+    last_name: str | None = None,
+    db_path: Path | None = None,
+) -> None:
+    try:
+        await asyncio.to_thread(
+            upsert_telegram_user,
+            user_id,
+            username=username,
+            first_name=first_name,
+            last_name=last_name,
+            db_path=db_path,
+        )
+    except Exception:
+        logger.exception("analytics upsert failed for user %s", user_id)
+
+
+async def record_personality_analysis_start_async(
+    user_id: int, db_path: Path | None = None
+) -> None:
+    try:
+        await asyncio.to_thread(record_personality_analysis_start, user_id, db_path=db_path)
+    except Exception:
+        logger.exception("analytics analysis start failed for user %s", user_id)
+
+
+async def add_token_usage_async(
+    user_id: int,
+    *,
+    prompt_tokens: int = 0,
+    completion_tokens: int = 0,
+    total_tokens: int = 0,
+    db_path: Path | None = None,
+) -> None:
+    try:
+        await asyncio.to_thread(
+            add_token_usage,
+            user_id,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total_tokens,
+            db_path=db_path,
+        )
+    except Exception:
+        logger.exception("analytics token usage failed for user %s", user_id)
+
+
+def schedule_upsert_telegram_user(
+    user_id: int,
+    *,
+    username: str | None = None,
+    first_name: str | None = None,
+    last_name: str | None = None,
+    db_path: Path | None = None,
+) -> None:
+    asyncio.create_task(
+        upsert_telegram_user_async(
+            user_id,
+            username=username,
+            first_name=first_name,
+            last_name=last_name,
+            db_path=db_path,
+        )
+    )
+
+
+def schedule_record_personality_analysis_start(
+    user_id: int, db_path: Path | None = None
+) -> None:
+    asyncio.create_task(
+        record_personality_analysis_start_async(user_id, db_path=db_path)
+    )
+
+
+def schedule_add_token_usage(
+    user_id: int,
+    *,
+    prompt_tokens: int = 0,
+    completion_tokens: int = 0,
+    total_tokens: int = 0,
+    db_path: Path | None = None,
+) -> None:
+    asyncio.create_task(
+        add_token_usage_async(
+            user_id,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total_tokens,
+            db_path=db_path,
+        )
+    )

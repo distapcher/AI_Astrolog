@@ -6,7 +6,7 @@ from aiogram import BaseMiddleware
 from aiogram.types import CallbackQuery, Message, TelegramObject, User
 
 from bot.config import Settings
-from bot.services.usage_store import upsert_telegram_user
+from bot.services.usage_store import schedule_upsert_telegram_user
 
 
 def _user_from_event(event: TelegramObject) -> User | None:
@@ -27,13 +27,16 @@ class UserTrackingMiddleware(BaseMiddleware):
         event: TelegramObject,
         data: dict[str, Any],
     ) -> Any:
-        user = _user_from_event(event)
-        if user:
-            upsert_telegram_user(
-                user.id,
-                username=user.username,
-                first_name=user.first_name,
-                last_name=user.last_name,
-                db_path=self._settings.analytics_db_path,
-            )
-        return await handler(event, data)
+        # Сначала отвечаем пользователю, аналитику пишем в фоне (не блокируем event loop).
+        try:
+            return await handler(event, data)
+        finally:
+            user = _user_from_event(event)
+            if user:
+                schedule_upsert_telegram_user(
+                    user.id,
+                    username=user.username,
+                    first_name=user.first_name,
+                    last_name=user.last_name,
+                    db_path=self._settings.analytics_db_path,
+                )

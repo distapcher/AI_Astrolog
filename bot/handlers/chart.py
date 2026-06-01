@@ -27,9 +27,8 @@ from bot.services.natal_bundle import (
 )
 from bot.services.natal_store import load_natal_profile, save_natal_profile
 from bot.services.usage_store import (
-    add_token_usage,
-    record_personality_analysis_start,
-    upsert_telegram_user,
+    schedule_add_token_usage,
+    schedule_record_personality_analysis_start,
 )
 from bot.states import NatalChartStates
 
@@ -149,14 +148,6 @@ async def on_birth_nation(
     await state.clear()
 
     user_id = message.from_user.id if message.from_user else 0
-    if user_id and message.from_user:
-        upsert_telegram_user(
-            user_id,
-            username=message.from_user.username,
-            first_name=message.from_user.first_name,
-            last_name=message.from_user.last_name,
-            db_path=settings.analytics_db_path,
-        )
 
     wait_msg = await message.answer(
         "⏳ Рассчитываю карту и готовлю <b>описание личности и предназначения</b>…\n"
@@ -213,7 +204,9 @@ async def on_birth_nation(
             "⏳ Расчет карты произведен. Запущен процесс анализа личности…"
         )
         if user_id:
-            record_personality_analysis_start(user_id, settings.analytics_db_path)
+            schedule_record_personality_analysis_start(
+                user_id, settings.analytics_db_path
+            )
         result = await ai.interpret_personality(natal.name, chart_text)
     except Exception as exc:
         logger.exception("AI personality analysis failed")
@@ -221,7 +214,7 @@ async def on_birth_nation(
         return
 
     if user_id:
-        add_token_usage(
+        schedule_add_token_usage(
             user_id,
             prompt_tokens=result.usage.prompt_tokens,
             completion_tokens=result.usage.completion_tokens,
