@@ -58,7 +58,7 @@ def load_settings() -> Settings:
         natal_db_path=Path(os.getenv("NATAL_DB_PATH", "/data/natal_profiles.db")),
         analytics_db_path=Path(os.getenv("ANALYTICS_DB_PATH", "/data/analytics.db")),
         dashboard_host=os.getenv("DASHBOARD_HOST", "0.0.0.0").strip(),
-        dashboard_port=int(os.getenv("DASHBOARD_PORT", "8787")),
+        dashboard_port=int(os.getenv("DASHBOARD_PORT", "8788")),
         dashboard_user=os.getenv("DASHBOARD_USER", "admin").strip(),
         dashboard_password=os.getenv("DASHBOARD_PASSWORD", "changeme").strip(),
     )

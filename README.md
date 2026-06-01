@@ -26,7 +26,7 @@ docker compose up -d dashboard
 ai-astrolog-dashboard
 ```
 
-Откройте `http://<сервер>:8787` (порт задаётся `DASHBOARD_PORT`). Логин и пароль — `DASHBOARD_USER` / `DASHBOARD_PASSWORD`.
+Откройте `http://<сервер>:8788` (порт задаётся `DASHBOARD_PORT`, по умолчанию 8788). Логин и пароль — `DASHBOARD_USER` / `DASHBOARD_PASSWORD`.
 
 ## Переменные окружения
 
@@ -45,7 +45,7 @@ OPENAI_BASE_URL=https://api.deepseek.com/v1
 OPENAI_MODEL=deepseek-chat
 
 # Дашборд
-DASHBOARD_PORT=8787
+DASHBOARD_PORT=8788
 DASHBOARD_USER=admin
 DASHBOARD_PASSWORD=...
 ```
