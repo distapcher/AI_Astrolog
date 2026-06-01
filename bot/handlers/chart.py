@@ -194,8 +194,7 @@ async def on_birth_nation(
 
     try:
         await wait_msg.edit_text(
-            "⏳ Карта рассчитана. ИИ пишет описание по 10 разделам…\n"
-            "<i>Ещё 2–5 минут.</i>"
+            "⏳ Расчет карты произведен. Запущен процесс анализа личности…"
         )
         personality_text = await ai.interpret_personality(natal.name, chart_text)
     except Exception as exc:
