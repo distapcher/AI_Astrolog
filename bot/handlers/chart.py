@@ -35,9 +35,6 @@ from bot.states import NatalChartStates
 logger = logging.getLogger(__name__)
 router = Router()
 
-_bundle_cache: dict[int, NatalChartBundle] = {}
-
-
 async def _start_chart_flow(message: Message, state: FSMContext) -> None:
     await state.clear()
     await state.set_state(NatalChartStates.name)
@@ -188,13 +185,12 @@ async def on_birth_nation(
     )
 
     try:
-        bundle = await build_natal_bundle(natal, astrologer)
+        bundle = await build_natal_bundle(natal, astrologer, include_svg=False)
     except RuntimeError as exc:
         await wait_msg.edit_text(str(exc))
         return
 
     if user_id:
-        _bundle_cache[user_id] = bundle
         save_natal_profile(user_id, natal, settings.natal_db_path)
 
     chart_text = bundle_plain_text_for_ai(bundle)
@@ -259,8 +255,9 @@ async def on_show_natal_data(
     status = await callback.message.answer("⏳ Рассчитываю и открываю натальные данные…")
 
     try:
-        bundle = await build_natal_bundle(natal, astrologer)
-        _bundle_cache[user_id] = bundle
+        bundle = await build_natal_bundle(
+            natal, astrologer, include_svg=True, keep_local_chart=True
+        )
     except RuntimeError as exc:
         await status.edit_text(str(exc))
         return

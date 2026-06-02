@@ -21,7 +21,18 @@ class NatalChartBundle:
     local_chart: Any | None
 
 
-async def build_natal_bundle(natal: NatalInput, astrologer: AstrologerClient) -> NatalChartBundle:
+async def build_natal_bundle(
+    natal: NatalInput,
+    astrologer: AstrologerClient,
+    *,
+    include_svg: bool = False,
+    keep_local_chart: bool = False,
+) -> NatalChartBundle:
+    """Собирает данные карты.
+
+    include_svg=False для анализа личности — не тянем ~200 KB SVG из API.
+    keep_local_chart=True только если нужен локальный fallback для SVG.
+    """
     local_chart = None
     try:
         local_chart = compute_natal_chart(natal)
@@ -30,7 +41,7 @@ async def build_natal_bundle(natal: NatalInput, astrologer: AstrologerClient) ->
 
     api_pkg: dict = {}
     try:
-        api_pkg = await astrologer.fetch_complete_natal_package(natal, include_svg=True)
+        api_pkg = await astrologer.fetch_complete_natal_package(natal, include_svg=include_svg)
     except Exception:
         logger.exception("Astrologer API package failed")
 
@@ -42,13 +53,17 @@ async def build_natal_bundle(natal: NatalInput, astrologer: AstrologerClient) ->
     else:
         raise RuntimeError("Не удалось рассчитать натальную карту.")
 
+    retained_chart = local_chart if keep_local_chart else None
+    if local_chart is not None and retained_chart is None:
+        del local_chart
+
     return NatalChartBundle(
         natal=natal,
         chart_data=chart_data_dict,
         moon_phase=api_pkg.get("moon_phase"),
         transit_aspects=api_pkg.get("transit_aspects"),
         svg_content=api_pkg.get("svg") or "",
-        local_chart=local_chart,
+        local_chart=retained_chart,
     )
 
 

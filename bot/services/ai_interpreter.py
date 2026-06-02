@@ -27,17 +27,22 @@ class AiInterpreter:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
         self._enabled = bool(settings.openai_api_key)
+        self._system_prompt: str | None = None
 
     @property
     def enabled(self) -> bool:
         return self._enabled
 
     def _load_system_prompt(self) -> str:
+        if self._system_prompt is not None:
+            return self._system_prompt
         path = self._settings.personality_prompt_path
         if path.exists():
-            return path.read_text(encoding="utf-8")
+            self._system_prompt = path.read_text(encoding="utf-8")
+            return self._system_prompt
         logger.warning("Personality prompt not found: %s", path)
-        return ""
+        self._system_prompt = ""
+        return self._system_prompt
 
     @staticmethod
     def _parse_usage(data: dict) -> LlmUsage:
