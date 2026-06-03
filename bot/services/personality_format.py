@@ -4,6 +4,18 @@ import html
 import re
 
 # Строка-заголовок раздела: «Раздел 1: …», «РАЗДЕЛ 2 …», «### РАЗДЕЛ 3:»
+_INTRO_CLOSING = "Итак, приступим к разбору твоей «Формулы успеха»."
+_OLD_CLOSING = re.compile(
+    r"Давай\s+разбер[её]м\s+тво[юеё]\s+"
+    r"[«\"']?Формулу\s+успеха[»\"']?\s+по\s+шагам\.?",
+    re.IGNORECASE,
+)
+
+
+def _normalize_intro_closing(text: str) -> str:
+    return _OLD_CLOSING.sub(_INTRO_CLOSING, text)
+
+
 _SECTION_LINE = re.compile(
     r"^\s*(?:#{1,6}\s*)?"
     r"(?:\*{1,2}\s*)?"
@@ -26,6 +38,7 @@ def format_personality_text(text: str) -> str:
     if not text:
         return ""
 
+    text = _normalize_intro_closing(text)
     out: list[str] = []
     for raw_line in text.splitlines():
         stripped = _strip_markdown_chars(raw_line)
