@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import httpx
 
 from bot.config import Settings
+from bot.services.personality_format import format_personality_text
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +71,9 @@ class AiInterpreter:
         user_content = (
             f"Имя: {name}\n\n"
             f"Полные данные натальной карты для анализа:\n\n{chart_text}\n\n"
-            "Проведи анализ строго по структуре из системного промпта (все 10 разделов)."
+            "Проведи анализ строго по структуре из системного промпта (все 10 разделов). "
+            "Не используй символы * и # и markdown. Заголовки разделов пиши как "
+            "«Раздел 1: …», «Раздел 2: …» и т.д."
         )
 
         url = f"{self._settings.openai_base_url.rstrip('/')}/chat/completions"
@@ -99,5 +102,5 @@ class AiInterpreter:
         choices = data.get("choices") or []
         if not choices:
             raise RuntimeError("Пустой ответ от ИИ.")
-        text = choices[0]["message"]["content"].strip()
+        text = format_personality_text(choices[0]["message"]["content"].strip())
         return PersonalityAnalysisResult(text=text, usage=self._parse_usage(data))
