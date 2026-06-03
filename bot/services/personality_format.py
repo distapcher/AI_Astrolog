@@ -16,6 +16,11 @@ def _normalize_intro_closing(text: str) -> str:
     return _OLD_CLOSING.sub(_INTRO_CLOSING, text)
 
 
+_SUBLABEL_LINE = re.compile(
+    r"^(\s*(?:\d+\.\s*)?)(Тезис:|Обоснование:)(.*)$",
+    re.IGNORECASE,
+)
+
 _SECTION_LINE = re.compile(
     r"^\s*(?:#{1,6}\s*)?"
     r"(?:\*{1,2}\s*)?"
@@ -25,6 +30,20 @@ _SECTION_LINE = re.compile(
     r"(?:\s*\*{1,2})?\s*$",
     re.IGNORECASE,
 )
+
+
+def _format_body_line(stripped: str) -> str:
+    m = _SUBLABEL_LINE.match(stripped)
+    if m:
+        prefix = html.escape(m.group(1))
+        label = m.group(2)
+        if label.lower().startswith("тезис"):
+            label = "Тезис:"
+        else:
+            label = "Обоснование:"
+        rest = html.escape(m.group(3))
+        return f"{prefix}<i>{html.escape(label)}</i>{rest}"
+    return html.escape(stripped)
 
 
 def _strip_markdown_chars(line: str) -> str:
@@ -55,6 +74,6 @@ def format_personality_text(text: str) -> str:
             out.append(f"<b>{html.escape(heading)}</b>")
             continue
 
-        out.append(html.escape(stripped))
+        out.append(_format_body_line(stripped))
 
     return "\n".join(out)
