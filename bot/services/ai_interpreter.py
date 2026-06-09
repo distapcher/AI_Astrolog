@@ -60,7 +60,7 @@ class AiInterpreter:
         )
 
     async def interpret_personality(self, name: str, chart_text: str) -> PersonalityAnalysisResult:
-        """Расшифровка предназначения и профессии по промпту astrolog_prof_ru."""
+        """Расшифровка натальной карты по системному промпту из prompts/."""
         if not self._enabled:
             raise RuntimeError("ИИ не настроен (нет OPENAI_API_KEY)")
 
@@ -70,12 +70,7 @@ class AiInterpreter:
 
         user_content = (
             f"Имя: {name}\n\n"
-            f"Полные данные натальной карты для анализа:\n\n{chart_text}\n\n"
-            "Проведи анализ строго по структуре из системного промпта (все 10 разделов). "
-            "Сначала — персональное вступление на «ты» (2–4 абзаца), последняя фраза вступления: "
-            "«Итак, приступим к разбору твоей «Формулы успеха».» "
-            "Затем разделы «Раздел 1: …» … «Раздел 10: …». "
-            "Не используй символы * и # и markdown."
+            f"Полные данные натальной карты:\n\n{chart_text}"
         )
 
         url = f"{self._settings.openai_base_url.rstrip('/')}/chat/completions"

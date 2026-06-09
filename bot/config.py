@@ -7,7 +7,7 @@ import os
 load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-PERSONALITY_PROMPT_PATH = BASE_DIR / "prompts" / "astrolog_prof_ru.md"
+PERSONALITY_PROMPT_PATH = BASE_DIR / "prompts" / "AstrologEncryptionPromptExt.txt"
 
 
 @dataclass(frozen=True)
@@ -54,7 +54,7 @@ def load_settings() -> Settings:
         openai_model=os.getenv("OPENAI_MODEL", "deepseek-chat").strip(),
         geonames_username=os.getenv("GEONAMES_USERNAME", "").strip() or None,
         personality_prompt_path=prompt_path,
-        ai_max_tokens=int(os.getenv("AI_MAX_TOKENS", "12000")),
+        ai_max_tokens=int(os.getenv("AI_MAX_TOKENS", "20000")),
         natal_db_path=Path(os.getenv("NATAL_DB_PATH", "/data/natal_profiles.db")),
         analytics_db_path=Path(os.getenv("ANALYTICS_DB_PATH", "/data/analytics.db")),
         dashboard_host=os.getenv("DASHBOARD_HOST", "0.0.0.0").strip(),
