@@ -7,7 +7,7 @@ import os
 load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-PERSONALITY_PROMPT_PATH = BASE_DIR / "prompts" / "Промпт_Расшифровка_натальной_карты.md"
+PERSONALITY_PROMPT_PATH = BASE_DIR / "prompts" / "AstrologEncryptionPromptExt_Claude.txt"
 
 
 @dataclass(frozen=True)
